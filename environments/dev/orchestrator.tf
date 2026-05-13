@@ -1,25 +1,50 @@
-# Data sources - 기존 인프라 재사용
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = "us-east-1"
+}
+
+# ============================================================================
+# Data Sources: 기존 공유 인프라 참조 (network-topology.md)
+# ============================================================================
+
 data "aws_ecs_cluster" "shared" {
-  name = "mcp-agents-staging-cluster"
+  cluster_name = "mcp-agents-staging-cluster"
 }
 
 data "aws_lb" "shared" {
   name = "mcp-agents-staging-alb"
 }
 
+# ============================================================================
 # CloudWatch Log Group
+# ============================================================================
+
 resource "aws_cloudwatch_log_group" "orchestrator" {
   name              = "/ecs/rorr-mcp-orchestrator"
   retention_in_days = 7
 
   tags = {
-    Name        = "rorr-mcp-orchestrator-logs"
     Environment = "dev"
+    Team        = "infra"
+    ManagedBy   = "terraform"
+    Project     = "rorr"
+    Service     = "mcp-orchestrator"
   }
 }
 
-# IAM Execution Role
-resource "aws_iam_role" "orchestrator_execution" {
+# ============================================================================
+# IAM: Execution Role (ECR pull, CloudWatch logs)
+# ============================================================================
+
+resource "aws_iam_role" "execution" {
   name = "rorr-mcp-orchestrator-execution"
 
   assume_role_policy = jsonencode({
@@ -36,18 +61,23 @@ resource "aws_iam_role" "orchestrator_execution" {
   })
 
   tags = {
-    Name        = "rorr-mcp-orchestrator-execution"
     Environment = "dev"
+    Team        = "infra"
+    ManagedBy   = "terraform"
+    Project     = "rorr"
   }
 }
 
-resource "aws_iam_role_policy_attachment" "orchestrator_execution" {
-  role       = aws_iam_role.orchestrator_execution.name
+resource "aws_iam_role_policy_attachment" "execution_policy" {
+  role       = aws_iam_role.execution.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
-# IAM Task Role (Bedrock 권한)
-resource "aws_iam_role" "orchestrator_task" {
+# ============================================================================
+# IAM: Task Role (Bedrock InvokeModel)
+# ============================================================================
+
+resource "aws_iam_role" "task" {
   name = "rorr-mcp-orchestrator-task"
 
   assume_role_policy = jsonencode({
@@ -64,15 +94,16 @@ resource "aws_iam_role" "orchestrator_task" {
   })
 
   tags = {
-    Name        = "rorr-mcp-orchestrator-task"
     Environment = "dev"
+    Team        = "infra"
+    ManagedBy   = "terraform"
+    Project     = "rorr"
   }
 }
 
-# Bedrock invoke 권한
-resource "aws_iam_role_policy" "orchestrator_bedrock" {
-  name = "rorr-mcp-orchestrator-bedrock-invoke"
-  role = aws_iam_role.orchestrator_task.id
+resource "aws_iam_role_policy" "task_bedrock" {
+  name = "bedrock-invoke"
+  role = aws_iam_role.task.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -83,85 +114,91 @@ resource "aws_iam_role_policy" "orchestrator_bedrock" {
           "bedrock:InvokeModel",
           "bedrock:InvokeModelWithResponseStream"
         ]
-        Resource = "arn:aws:bedrock:us-east-1::inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "bedrock:InvokeModel",
-          "bedrock:InvokeModelWithResponseStream"
+        Resource = [
+          "arn:aws:bedrock:us-east-1::inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "arn:aws:bedrock:us-east-1:239460481239:foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0"
         ]
-        Resource = "arn:aws:bedrock:us-east-1:*:foundation-model/anthropic.claude-haiku-4-5-20251001-v1"
       }
     ]
   })
 }
 
+# ============================================================================
 # ECS Task Definition
+# ============================================================================
+
 resource "aws_ecs_task_definition" "orchestrator" {
   family                   = "rorr-mcp-orchestrator-task"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
   cpu                      = "512"
   memory                   = "1024"
-  execution_role_arn       = aws_iam_role.orchestrator_execution.arn
-  task_role_arn            = aws_iam_role.orchestrator_task.arn
+  execution_role_arn       = aws_iam_role.execution.arn
+  task_role_arn            = aws_iam_role.task.arn
 
-  container_definitions = jsonencode([
-    {
-      name      = "rorr-mcp-orchestrator"
-      image     = "239460481239.dkr.ecr.us-east-1.amazonaws.com/rorr-orchestrator:latest"
-      portMappings = [
-        {
-          containerPort = 4000
-          hostPort      = 4000
-          protocol      = "tcp"
-        }
-      ]
-      logConfiguration = {
-        logDriver = "awslogs"
-        options = {
-          "awslogs-group"         = aws_cloudwatch_log_group.orchestrator.name
-          "awslogs-region"        = "us-east-1"
-          "awslogs-stream-prefix" = "ecs"
+  container_definitions = jsonencode(
+    [
+      {
+        name      = "rorr-mcp-orchestrator"
+        image     = "239460481239.dkr.ecr.us-east-1.amazonaws.com/rorr-orchestrator:latest"
+        essential = true
+        portMappings = [
+          {
+            containerPort = 4000
+            hostPort      = 4000
+            protocol      = "tcp"
+          }
+        ]
+        environment = [
+          {
+            name  = "PORT"
+            value = "4000"
+          },
+          {
+            name  = "LLM_PROVIDER"
+            value = "bedrock"
+          },
+          {
+            name  = "AWS_REGION"
+            value = "us-east-1"
+          },
+          {
+            name  = "LLM_MODEL"
+            value = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+          },
+          {
+            name  = "MCP_INFRA_URL"
+            value = "http://${data.aws_lb.shared.dns_name}:5010/mcp"
+          },
+          {
+            name  = "DEFAULT_USER_ID"
+            value = "woody@rorr.club"
+          }
+        ]
+        logConfiguration = {
+          logDriver = "awslogs"
+          options = {
+            "awslogs-group"         = aws_cloudwatch_log_group.orchestrator.name
+            "awslogs-region"        = "us-east-1"
+            "awslogs-stream-prefix" = "ecs"
+          }
         }
       }
-      environment = [
-        {
-          name  = "PORT"
-          value = "4000"
-        },
-        {
-          name  = "LLM_PROVIDER"
-          value = "bedrock"
-        },
-        {
-          name  = "AWS_REGION"
-          value = "us-east-1"
-        },
-        {
-          name  = "LLM_MODEL"
-          value = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
-        },
-        {
-          name  = "MCP_INFRA_URL"
-          value = "http://${data.aws_lb.shared.dns_name}:5010/mcp"
-        },
-        {
-          name  = "DEFAULT_USER_ID"
-          value = "woody@rorr.club"
-        }
-      ]
-    }
-  ])
+    ]
+  )
 
   tags = {
-    Name        = "rorr-mcp-orchestrator-task"
     Environment = "dev"
+    Team        = "infra"
+    ManagedBy   = "terraform"
+    Project     = "rorr"
   }
 }
 
-# Target Group
+# ============================================================================
+# ALB Target Group
+# ============================================================================
+
 resource "aws_lb_target_group" "orchestrator" {
   name        = "rorr-mcp-orchestrator-tg"
   port        = 4000
@@ -175,16 +212,22 @@ resource "aws_lb_target_group" "orchestrator" {
     timeout             = 3
     interval            = 30
     path                = "/health"
+    port                = "4000"
     matcher             = "200"
   }
 
   tags = {
-    Name        = "rorr-mcp-orchestrator-tg"
     Environment = "dev"
+    Team        = "infra"
+    ManagedBy   = "terraform"
+    Project     = "rorr"
   }
 }
 
-# ALB Listener
+# ============================================================================
+# ALB Listener (data source 사용)
+# ============================================================================
+
 resource "aws_lb_listener" "orchestrator" {
   load_balancer_arn = data.aws_lb.shared.arn
   port              = "4000"
@@ -196,12 +239,17 @@ resource "aws_lb_listener" "orchestrator" {
   }
 
   tags = {
-    Name        = "rorr-mcp-orchestrator-listener"
     Environment = "dev"
+    Team        = "infra"
+    ManagedBy   = "terraform"
+    Project     = "rorr"
   }
 }
 
+# ============================================================================
 # ECS Service
+# ============================================================================
+
 resource "aws_ecs_service" "orchestrator" {
   name            = "rorr-mcp-orchestrator-service"
   cluster         = data.aws_ecs_cluster.shared.id
@@ -222,27 +270,14 @@ resource "aws_ecs_service" "orchestrator" {
   }
 
   depends_on = [
-    aws_lb_listener.orchestrator
+    aws_lb_listener.orchestrator,
+    aws_iam_role_policy.task_bedrock
   ]
 
   tags = {
-    Name        = "rorr-mcp-orchestrator-service"
     Environment = "dev"
+    Team        = "infra"
+    ManagedBy   = "terraform"
+    Project     = "rorr"
   }
-}
-
-# Outputs
-output "ecs_service_name" {
-  description = "ECS Service 이름"
-  value       = aws_ecs_service.orchestrator.name
-}
-
-output "target_group_arn" {
-  description = "Target Group ARN"
-  value       = aws_lb_target_group.orchestrator.arn
-}
-
-output "orchestrator_endpoint" {
-  description = "Orchestrator 엔드포인트 URL"
-  value       = "http://${data.aws_lb.shared.dns_name}:4000"
 }
