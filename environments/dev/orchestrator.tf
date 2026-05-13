@@ -101,6 +101,9 @@ resource "aws_iam_role" "task" {
   }
 }
 
+# Cross-region inference profile (us.* 접두사)은 AWS가 내부적으로
+# us-east-1, us-east-2, us-west-2 중 하나로 자동 라우팅합니다.
+# 따라서 IAM 정책에서 리전을 와일드카드(*)로 설정해야 합니다.
 resource "aws_iam_role_policy" "task_bedrock" {
   name = "bedrock-invoke"
   role = aws_iam_role.task.id
@@ -115,12 +118,10 @@ resource "aws_iam_role_policy" "task_bedrock" {
           "bedrock:InvokeModelWithResponseStream"
         ]
         Resource = [
-          # Claude Haiku 4.5
-          "arn:aws:bedrock:us-east-1:239460481239:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0",
-          "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
-          # Claude Opus 4.5
-          "arn:aws:bedrock:us-east-1:239460481239:inference-profile/us.anthropic.claude-opus-4-5-20251101-v1:0",
-          "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-opus-4-5-20251101-v1:0"
+          "arn:aws:bedrock:*:239460481239:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+          "arn:aws:bedrock:*:239460481239:inference-profile/us.anthropic.claude-opus-4-5-20251101-v1:0",
+          "arn:aws:bedrock:*::foundation-model/anthropic.claude-opus-4-5-20251101-v1:0"
         ]
       }
     ]
