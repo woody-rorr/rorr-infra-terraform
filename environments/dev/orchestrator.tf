@@ -115,12 +115,10 @@ resource "aws_iam_role_policy" "task_bedrock" {
           "bedrock:InvokeModelWithResponseStream"
         ]
         Resource = [
-          # Claude Haiku 4.5
-          "arn:aws:bedrock:us-east-1:239460481239:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0",
-          "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
-          # Claude Opus 4.5
-          "arn:aws:bedrock:us-east-1:239460481239:inference-profile/us.anthropic.claude-opus-4-5-20251101-v1:0",
-          "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-opus-4-5-20251101-v1:0"
+          "arn:aws:bedrock:*:239460481239:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+          "arn:aws:bedrock:*:239460481239:inference-profile/us.anthropic.claude-opus-4-5-20251101-v1:0",
+          "arn:aws:bedrock:*::foundation-model/anthropic.claude-opus-4-5-20251101-v1:0"
         ]
       }
     ]
