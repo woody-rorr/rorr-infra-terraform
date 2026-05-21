@@ -1,16 +1,3 @@
-terraform {
-  required_version = ">= 1.5.0"
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-}
-
-provider "aws" {
-  region = var.aws_region
-}
 
 # =========================================================
 # Variables
@@ -114,13 +101,6 @@ data "aws_subnets" "public" {
   }
 }
 
-data "aws_ecs_cluster" "shared" {
-  cluster_name = "mcp-agents-staging-cluster"
-}
-
-data "aws_lb" "shared" {
-  name = "mcp-agents-staging-alb"
-}
 
 data "aws_lb_listener" "shared" {
   load_balancer_arn = data.aws_lb.shared.arn
